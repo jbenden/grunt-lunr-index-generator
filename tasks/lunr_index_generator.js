@@ -27,6 +27,7 @@ module.exports = function(grunt) {
         return result;
     }
 
+    // FIXME: Snag the YAML front matter and parse out "tags" list element.
     function generateMarkdownDoc(body, doc) {
         var h1s = [];
         var h2s = [];
@@ -38,14 +39,27 @@ module.exports = function(grunt) {
             } else if (line.lastIndexOf('##', 0) === 0) {
                 h2s.push(line);
             } else if (line.lastIndexOf('#', 0) === 0) {
-                h1s.push(line);
+                var re = /^#\s*([^{]*)(?:\s+\{(#[^\}]*)\}|)$/i;
+
+                var result = re.exec(line);
+                if (result !== null) {
+                    h1s.push(result[1]);
+                    doc.title = result[1];
+                    doc.url = result[2] || doc.url;
+                } else {
+                    h1s.push(line);
+                    doc.title = line.substring(2).trim();
+                }
             }
             doc.h1 = h1s.join(',');
             doc.h2 = h2s.join(',');
             doc.h3 = h3s.join(',');
         });
+
+        return doc;
     }
 
+    // FIXME: Find keywords metadata and store in to the "tags" doc element.
     function generateHtmlDoc(body, doc) {
         var $ = cheerio.load(body);
 
@@ -53,6 +67,8 @@ module.exports = function(grunt) {
         doc.h1s = $('h1').map(function(i, element){return $(element).text();}).get().join(",");
         doc.h2s = $('h2').map(function(i, element){return $(element).text();}).get().join(",");
         doc.h3s = $('h3').map(function(i, element){return $(element).text();}).get().join(",");
+
+        return doc;
     }
 
     grunt.registerMultiTask('lunr_index_generator',
@@ -60,16 +76,23 @@ module.exports = function(grunt) {
                             function() {
 
                                 var files = this.files;
+                                var jsLunr = lunr;
+                                var idx = new lunr.Builder;
 
-                                var idx = lunr(function () {
-                                    this.field('name', { boost: 10 });
-                                    this.field('title', { boost: 10 });
-                                    this.field('h1', { boost: 8 });
-                                    this.field('h2', { boost: 5 });
-                                    this.field('h3', { boost: 3 });
-                                    this.field('body');
+                                idx.pipeline.add(jsLunr.trimmer, jsLunr.stopWordFilter, jsLunr.stemmer);
+                                idx.searchPipeline.add(jsLunr.stemmer);
 
-                                    var me = this;
+                                //var idx = lunr(function () {
+                                    idx.field('name', { boost: 10 });
+                                    idx.field('title', { boost: 10 });
+                                    idx.field('h1', { boost: 8 });
+                                    idx.field('h2', { boost: 5 });
+                                    idx.field('h3', { boost: 3 });
+                                    idx.field('tags', { boost: 3 });
+                                    idx.field('body');
+
+                                    var me = idx;
+                                    var docs = [];
                                     
                                     files.forEach(function (fileGroup) {
 
@@ -79,8 +102,13 @@ module.exports = function(grunt) {
                                             var body = grunt.file.read(file);
 
                                             var doc = {
-                                                id:file,
-                                                name:file,
+                                                id:file.toString(),
+                                                name:file.toString(),
+                                                url:file.toString(),
+                                                date:'2017-09-08', // FIXME: Read YAML front matter for contents.
+                                                categories:[],
+                                                tags:[],
+                                                is_post:false,
                                                 h1:'',
                                                 h2:'',
                                                 h3:'',
@@ -88,23 +116,32 @@ module.exports = function(grunt) {
                                             };
 
                                             if (fileExt === 'md' || fileExt === 'markdown') {
-                                                generateMarkdownDoc(body, doc);
+                                                doc = generateMarkdownDoc(body, doc);
                                                 me.add(doc);
                                             }
 
                                             if (fileExt === 'html') {
-                                                generateHtmlDoc(body, doc);
+                                                doc = generateHtmlDoc(body, doc);
                                                 me.add(doc);
                                             }
 
+                                            docs.push(doc);
                                         });
 
-                                        var asJson = JSON.stringify(me);
+                                        // var indexAsJson = JSON.stringify(me);
+                                        // var docAsJson = JSON.stringify(docs);
+
+                                        var theJson = {
+                                            docs: docs,
+                                            index: me.build()
+                                        };
+                                        var asJson = JSON.stringify(theJson);
+
                                         grunt.file.write(fileGroup.dest, asJson);
 
 
                                     });
-                                });
+                                //});
                             });
 
 };
